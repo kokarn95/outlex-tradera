@@ -1,0 +1,12 @@
+{
+  "name": "outlex-tradera-api",
+  "version": "1.0.0",
+  "description": "Tradera API proxy för Outlex Shopify",
+  "private": true,
+  "scripts": {
+    "dev": "vercel dev"
+  },
+  "devDependencies": {
+    "vercel": "^32.0.0"
+  }
+}
