@@ -115,7 +115,7 @@ export default async function handler(req, res) {
         endDate: endDateStr,
         timeLeft,
         images,
-        thumbnail: get('ThumbnailLink') || images[0] || '',
+        thumbnail: images.find(u => u.includes('/images/')) || images[0] || '',
         bids: getInt('BidCount'),
         traderaUrl: `https://www.tradera.com/item/${id}`,
       };
