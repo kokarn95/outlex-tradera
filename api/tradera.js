@@ -3,6 +3,47 @@ const APP_ID = process.env.TRADERA_APP_ID || '5909';
 const APP_KEY = process.env.TRADERA_APP_KEY || 'ceadfa2c-9481-4d25-930d-8390c639e911';
 const SELLER_ALIAS = process.env.TRADERA_SELLER_ALIAS || 'outlex';
 
+async function soapRequest(service, method, params) {
+  const paramXml = Object.entries(params)
+    .map(([k, v]) => `<${k}>${v}</${k}>`)
+    .join('');
+
+  const body = `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <soap:Header>
+    <AuthenticationHeader xmlns="http://api.tradera.com">
+      <AppId>${APP_ID}</AppId>
+      <AppKey>${APP_KEY}</AppKey>
+    </AuthenticationHeader>
+  </soap:Header>
+  <soap:Body>
+    <${method} xmlns="http://api.tradera.com">
+      ${paramXml}
+    </${method}>
+  </soap:Body>
+</soap:Envelope>`;
+
+  const url = `https://api.tradera.com/v3/${service}.asmx`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/xml; charset=utf-8',
+      'SOAPAction': `http://api.tradera.com/${method}`,
+    },
+    body,
+  });
+  return res.text();
+}
+
+function getTag(xml, tag) {
+  const match = xml.match(new RegExp(`<(?:[^:>]+:)?${tag}>([\\s\\S]*?)<\\/(?:[^:>]+:)?${tag}>`));
+  return match ? match[1].trim() : '';
+}
+
+function getAllTags(xml, tag) {
+  return [...xml.matchAll(new RegExp(`<(?:[^:>]+:)?${tag}>([\\s\\S]*?)<\\/(?:[^:>]+:)?${tag}>`, 'g'))].map(m => m[1].trim());
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -12,44 +53,33 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   try {
-    // Step 1: Get seller's user ID from alias
-    const userUrl = `https://api.tradera.com/v3/PublicService.asmx/PublicGetUserByAlias?appId=${APP_ID}&appKey=${APP_KEY}&alias=${SELLER_ALIAS}`;
-    const userRes = await fetch(userUrl);
-    const userXml = await userRes.text();
+    // Step 1: Search for items by seller alias
+    const searchXml = await soapRequest('SearchService', 'Search', {
+      searchWords: '',
+      categoryId: 0,
+      sellerId: 0,
+      sellerAlias: SELLER_ALIAS,
+      orderBy: 0,
+      itemStatus: 0,
+      pageNumber: 1,
+      itemsPerPage: 50,
+    });
 
-    // Extract user ID
-    const userIdMatch = userXml.match(/<UserId>(\d+)<\/UserId>/);
-    const userId = userIdMatch ? userIdMatch[1] : null;
+    // Get all item IDs
+    const itemIds = getAllTags(searchXml, 'ItemId');
+    const altIds = getAllTags(searchXml, 'Id');
+    const allIds = itemIds.length > 0 ? itemIds : altIds;
 
-    if (!userId) {
-      return res.status(200).json({ items: [], count: 0, debug: 'No userId found', rawXml: userXml.substring(0, 500) });
+    if (allIds.length === 0) {
+      return res.status(200).json({ items: [], count: 0, debug: searchXml.substring(0, 1000) });
     }
 
-    // Step 2: Search for items by this seller
-    const searchUrl = `https://api.tradera.com/v3/SearchService.asmx/Search?appId=${APP_ID}&appKey=${APP_KEY}&searchWords=&categoryId=0&sellerId=${userId}&orderBy=0&itemStatus=0&pageNumber=1&itemsPerPage=50`;
-    const searchRes = await fetch(searchUrl);
-    const searchXml = await searchRes.text();
-
-    // Parse item IDs
-    const itemIds = [...searchXml.matchAll(/<ItemId>(\d+)<\/ItemId>/g)].map(m => m[1]);
-
-    if (itemIds.length === 0) {
-      // Try alternative tag
-      const altIds = [...searchXml.matchAll(/<Id>(\d+)<\/Id>/g)].map(m => m[1]);
-      if (altIds.length === 0) {
-        return res.status(200).json({ items: [], count: 0, userId, debug: searchXml.substring(0, 800) });
-      }
-    }
-
-    const allIds = itemIds.length > 0 ? itemIds : [...searchXml.matchAll(/<Id>(\d+)<\/Id>/g)].map(m => m[1]);
+    // Step 2: Get details for each item
     const itemsToFetch = allIds.slice(0, 20);
-
     const itemDetails = await Promise.all(
       itemsToFetch.map(async (id) => {
         try {
-          const itemUrl = `https://api.tradera.com/v3/PublicService.asmx/GetItem?appId=${APP_ID}&appKey=${APP_KEY}&itemId=${id}`;
-          const itemRes = await fetch(itemUrl);
-          const itemXml = await itemRes.text();
+          const itemXml = await soapRequest('PublicService', 'GetItem', { itemId: id });
           return parseItem(itemXml, id);
         } catch (e) { return null; }
       })
@@ -64,14 +94,10 @@ export default async function handler(req, res) {
 }
 
 function parseItem(xml, id) {
-  const get = (tag) => {
-    const match = xml.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`));
-    return match ? match[1].trim() : '';
-  };
+  const get = (tag) => getTag(xml, tag);
   const getInt = (tag) => { const val = get(tag); return val ? parseInt(val, 10) : 0; };
 
-  const imageMatches = [...xml.matchAll(/<Url>(https?:\/\/[^<]+)<\/Url>/g)];
-  const images = imageMatches.map(m => m[1]);
+  const images = getAllTags(xml, 'Url').filter(u => u.startsWith('http'));
 
   const endDateStr = get('EndDate');
   const endDate = endDateStr ? new Date(endDateStr) : null;
@@ -89,10 +115,17 @@ function parseItem(xml, id) {
   }
 
   return {
-    id, title: get('Title') || get('ShortDescription'),
-    currentBid: getInt('MaxBid'), reservePrice: getInt('ReservePrice'),
-    buyNowPrice: getInt('BuyNowPrice'), currency: 'SEK',
-    endDate: endDateStr, timeLeft, images, thumbnail: images[0] || '',
-    bids: getInt('BidCount'), traderaUrl: `https://www.tradera.com/item/${id}`,
+    id,
+    title: get('Title') || get('ShortDescription'),
+    currentBid: getInt('MaxBid'),
+    reservePrice: getInt('ReservePrice'),
+    buyNowPrice: getInt('BuyNowPrice'),
+    currency: 'SEK',
+    endDate: endDateStr,
+    timeLeft,
+    images,
+    thumbnail: images[0] || '',
+    bids: getInt('BidCount'),
+    traderaUrl: `https://www.tradera.com/item/${id}`,
   };
 }
