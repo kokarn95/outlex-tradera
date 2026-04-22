@@ -9,7 +9,7 @@ async function soapRequest(service, method, params) {
     .join('');
 
   const body = `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
   <soap:Header>
     <AuthenticationHeader xmlns="http://api.tradera.com">
       <AppId>${APP_ID}</AppId>
@@ -53,29 +53,20 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   try {
-    // Step 1: Search for items by seller alias
-    const searchXml = await soapRequest('SearchService', 'Search', {
-      searchWords: '',
-      categoryId: 0,
-      sellerId: 0,
-      sellerAlias: SELLER_ALIAS,
-      orderBy: 0,
-      itemStatus: 0,
+    // Use GetSellerItems with SOAP - correct format
+    const searchXml = await soapRequest('PublicService', 'GetSellerItems', {
+      sellerId: 7030056,
       pageNumber: 1,
       itemsPerPage: 50,
     });
 
-    // Get all item IDs
-    const itemIds = getAllTags(searchXml, 'ItemId');
-    const altIds = getAllTags(searchXml, 'Id');
-    const allIds = itemIds.length > 0 ? itemIds : altIds;
+    const itemIds = getAllTags(searchXml, 'Id');
 
-    if (allIds.length === 0) {
+    if (itemIds.length === 0) {
       return res.status(200).json({ items: [], count: 0, debug: searchXml.substring(0, 1000) });
     }
 
-    // Step 2: Get details for each item
-    const itemsToFetch = allIds.slice(0, 20);
+    const itemsToFetch = itemIds.slice(0, 20);
     const itemDetails = await Promise.all(
       itemsToFetch.map(async (id) => {
         try {
