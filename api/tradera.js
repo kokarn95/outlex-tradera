@@ -394,7 +394,7 @@
       card.rel = 'noopener noreferrer';
 
       const urgent = isUrgent(item.timeLeft);
-      const bidPrice = formatPrice(item.currentBid > 0 ? item.currentBid : null);
+      const bidPrice = formatPrice(item.currentBid);
       const buyNow = formatPrice(item.buyNowPrice);
 
       card.innerHTML = `
@@ -414,7 +414,7 @@
             <div>
               <div class="outlex-tradera__bid-label">${bidPrice ? 'Högsta bud' : 'Utropspris'}</div>
               <div class="outlex-tradera__bid-amount">${bidPrice || formatPrice(item.reservePrice) || '1'}<span class="outlex-tradera__bid-currency">kr</span></div>
-              <div class="outlex-tradera__bid-count">${item.bids > 0 ? item.bids + ' bud' : (item.currentBid > 0 ? '1 bud' : 'Inga bud ännu')}</div>
+              <div class="outlex-tradera__bid-count">${item.bids > 0 ? item.bids + ' bud' : 'Inga bud ännu'}</div>
             </div>
             ${buyNow ? `<div class="outlex-tradera__buy-now"><div class="outlex-tradera__buy-now-label">Köp nu</div><div class="outlex-tradera__buy-now-price">${buyNow} kr</div></div>` : ''}
           </div>
