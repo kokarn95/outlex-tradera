@@ -59,7 +59,7 @@ export default async function handler(req, res) {
   try {
     // Step 1: Get userId from alias
     const userXml = await soapRequest('PublicService', 'GetUserByAlias', { alias: SELLER_ALIAS });
-    const userId = getTag(userXml, 'UserId');
+    const userId = getTag(userXml, "Id");
 
     if (!userId) {
       return res.status(200).json({ items: [], count: 0, step: 'getUserByAlias', debug: userXml.substring(0, 800) });
