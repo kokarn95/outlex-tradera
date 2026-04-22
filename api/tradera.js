@@ -1,7 +1,7 @@
 // api/tradera.js - Vercel Serverless Function
 const APP_ID = process.env.TRADERA_APP_ID || '5909';
 const APP_KEY = process.env.TRADERA_APP_KEY || 'ceadfa2c-9481-4d25-930d-8390c639e911';
-const SELLER_ID = process.env.TRADERA_SELLER_ID || '7030056';
+const SELLER_ALIAS = process.env.TRADERA_SELLER_ALIAS || 'outlex';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -12,21 +12,38 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   try {
-    const sellerItemsUrl = `https://api.tradera.com/v3/PublicService.asmx/GetSellerItems?appId=${APP_ID}&appKey=${APP_KEY}&sellerId=${SELLER_ID}&pageNumber=1&itemsPerPage=50`;
-    const sellerRes = await fetch(sellerItemsUrl);
-    const sellerXml = await sellerRes.text();
+    // Step 1: Get seller's user ID from alias
+    const userUrl = `https://api.tradera.com/v3/PublicService.asmx/PublicGetUserByAlias?appId=${APP_ID}&appKey=${APP_KEY}&alias=${SELLER_ALIAS}`;
+    const userRes = await fetch(userUrl);
+    const userXml = await userRes.text();
 
-    // Try multiple ID tag formats
-    let itemIds = [...sellerXml.matchAll(/<Id>(\d+)<\/Id>/g)].map(m => m[1]);
-    if (itemIds.length === 0) itemIds = [...sellerXml.matchAll(/<ItemId>(\d+)<\/ItemId>/g)].map(m => m[1]);
-    if (itemIds.length === 0) itemIds = [...sellerXml.matchAll(/<id>(\d+)<\/id>/g)].map(m => m[1]);
+    // Extract user ID
+    const userIdMatch = userXml.match(/<UserId>(\d+)<\/UserId>/);
+    const userId = userIdMatch ? userIdMatch[1] : null;
 
-    if (itemIds.length === 0) {
-      // Return debug info so we can see the raw XML
-      return res.status(200).json({ items: [], count: 0, debug: sellerXml.substring(0, 1000) });
+    if (!userId) {
+      return res.status(200).json({ items: [], count: 0, debug: 'No userId found', rawXml: userXml.substring(0, 500) });
     }
 
-    const itemsToFetch = itemIds.slice(0, 20);
+    // Step 2: Search for items by this seller
+    const searchUrl = `https://api.tradera.com/v3/SearchService.asmx/Search?appId=${APP_ID}&appKey=${APP_KEY}&searchWords=&categoryId=0&sellerId=${userId}&orderBy=0&itemStatus=0&pageNumber=1&itemsPerPage=50`;
+    const searchRes = await fetch(searchUrl);
+    const searchXml = await searchRes.text();
+
+    // Parse item IDs
+    const itemIds = [...searchXml.matchAll(/<ItemId>(\d+)<\/ItemId>/g)].map(m => m[1]);
+
+    if (itemIds.length === 0) {
+      // Try alternative tag
+      const altIds = [...searchXml.matchAll(/<Id>(\d+)<\/Id>/g)].map(m => m[1]);
+      if (altIds.length === 0) {
+        return res.status(200).json({ items: [], count: 0, userId, debug: searchXml.substring(0, 800) });
+      }
+    }
+
+    const allIds = itemIds.length > 0 ? itemIds : [...searchXml.matchAll(/<Id>(\d+)<\/Id>/g)].map(m => m[1]);
+    const itemsToFetch = allIds.slice(0, 20);
+
     const itemDetails = await Promise.all(
       itemsToFetch.map(async (id) => {
         try {
@@ -39,7 +56,7 @@ export default async function handler(req, res) {
     );
 
     const validItems = itemDetails.filter(item => item !== null && item.title);
-    return res.status(200).json({ items: validItems, count: validItems.length, sellerId: SELLER_ID, fetchedAt: new Date().toISOString() });
+    return res.status(200).json({ items: validItems, count: validItems.length, fetchedAt: new Date().toISOString() });
 
   } catch (error) {
     return res.status(500).json({ error: 'Kunde inte hämta annonser', details: error.message });
